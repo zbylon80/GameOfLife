@@ -61,7 +61,6 @@ public:
     }
 
     void render(bool paused, int cursorX, int cursorY) const {
-        // tylko home cursor, bez czyszczenia ekranu
         std::cout << "\x1B[H";
 
         std::cout
@@ -72,7 +71,7 @@ public:
             << "\n";
 
         std::cout
-            << "[P]=Pause/Run  [WASD]=Move (paused)  [Space]=Toggle (paused)  [N]=Step (paused)\n"
+            << "[P]=Pause/Run  [WASD/Arrows]=Move (paused)  [Space]=Toggle (paused)  [N]=Step (paused)\n"
             << "[0]=Clear  [1]=Glider  [2]=Block  [3]=Blinker  [4]=Toad  [5]=Beacon  [Esc]=Quit\n\n";
 
         for (int y = 0; y < height; y++) {
@@ -141,7 +140,6 @@ private:
 };
 
 // ---------- Patterns ----------
-
 void placeGlider(World& w, int x, int y) {
     w.setAlive(x + 1, y + 0);
     w.setAlive(x + 2, y + 1);
@@ -192,8 +190,7 @@ int clamp(int v, int lo, int hi) {
 }
 
 int main() {
-    // UKRYJ KURSOR
-    std::cout << "\x1B[?25l";
+    std::cout << "\x1B[?25l"; // hide cursor
 
     World world(40, 20);
     world.setTorus(false);
@@ -209,70 +206,94 @@ int main() {
 
     while (running) {
         if (_kbhit()) {
-            char key = _getch();
+            int key = _getch();
 
-            switch (key) {
-            case 'p':
-            case 'P':
-                paused = !paused;
-                break;
+            // Arrow keys and some special keys come as 0 or 224, then another code
+            if (key == 0 || key == 224) {
+                int special = _getch();
+                if (paused) {
+                    switch (special) {
+                    case 72: // Up
+                        cursorY--;
+                        break;
+                    case 80: // Down
+                        cursorY++;
+                        break;
+                    case 75: // Left
+                        cursorX--;
+                        break;
+                    case 77: // Right
+                        cursorX++;
+                        break;
+                    }
+                }
+            }
+            else {
+                switch (key) {
+                case 'p':
+                case 'P':
+                    paused = !paused;
+                    break;
 
-            case 'n':
-            case 'N':
-                if (paused) world.step();
-                break;
+                case 'n':
+                case 'N':
+                    if (paused) world.step();
+                    break;
 
-            case 'r':
-            case 'R':
-                world.clear();
-                paused = true;
-                cursorX = 0;
-                cursorY = 0;
-                break;
+                case 'r':
+                case 'R':
+                    world.clear();
+                    paused = true;
+                    cursorX = 0;
+                    cursorY = 0;
+                    break;
 
-            case 27: // ESC
-                running = false;
-                break;
+                case 27: // ESC
+                    running = false;
+                    break;
 
-            case ' ':
-                if (paused) world.toggleCell(cursorX, cursorY);
-                break;
+                case ' ':
+                    if (paused) world.toggleCell(cursorX, cursorY);
+                    break;
 
-            case 'w':
-            case 'W':
-                if (paused) cursorY--;
-                break;
-            case 's':
-            case 'S':
-                if (paused) cursorY++;
-                break;
-            case 'a':
-            case 'A':
-                if (paused) cursorX--;
-                break;
-            case 'd':
-            case 'D':
-                if (paused) cursorX++;
-                break;
+                    // WASD movement (paused)
+                case 'w':
+                case 'W':
+                    if (paused) cursorY--;
+                    break;
+                case 's':
+                case 'S':
+                    if (paused) cursorY++;
+                    break;
+                case 'a':
+                case 'A':
+                    if (paused) cursorX--;
+                    break;
+                case 'd':
+                case 'D':
+                    if (paused) cursorX++;
+                    break;
 
-            case '0':
-                if (paused) world.clear();
-                break;
-            case '1':
-                if (paused) placeGlider(world, cursorX, cursorY);
-                break;
-            case '2':
-                if (paused) placeBlock(world, cursorX, cursorY);
-                break;
-            case '3':
-                if (paused) placeBlinker(world, cursorX, cursorY);
-                break;
-            case '4':
-                if (paused) placeToad(world, cursorX, cursorY);
-                break;
-            case '5':
-                if (paused) placeBeacon(world, cursorX, cursorY);
-                break;
+                    // Pattern hotkeys (paused)
+                case '0':
+                    if (paused) world.clear();
+                    break;
+                case '1':
+                    if (paused) placeGlider(world, cursorX, cursorY);
+                    break;
+                case '2':
+                    if (paused) placeBlock(world, cursorX, cursorY);
+                    break;
+                case '3':
+                    if (paused) placeBlinker(world, cursorX, cursorY);
+                    break;
+                case '4':
+                    if (paused) placeToad(world, cursorX, cursorY);
+                    break;
+                case '5':
+                    if (paused) placeBeacon(world, cursorX, cursorY);
+                    break;
+                }
             }
         }
 
@@ -287,8 +308,6 @@ int main() {
         std::this_thread::sleep_for(frameTime);
     }
 
-    // PRZYWRÓĆ KURSOR
-    std::cout << "\x1B[?25h";
-
+    std::cout << "\x1B[?25h"; // show cursor
     return 0;
 }
