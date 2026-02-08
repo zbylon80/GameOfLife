@@ -3,7 +3,8 @@
 #include <chrono>
 #include <thread>
 #include <cstdint>
-#include <conio.h> // _kbhit, _getch (Windows)
+#include <conio.h>   // _kbhit, _getch (Windows)
+#include <algorithm> // std::fill
 
 class World {
 public:
@@ -24,9 +25,14 @@ public:
 
     int getAliveCount() const {
         int sum = 0;
-        for (uint8_t c : cells)
-            sum += (c != 0);
+        for (uint8_t c : cells) sum += (c != 0);
         return sum;
+    }
+
+    void toggleCell(int x, int y) {
+        if (!inBounds(x, y)) return;
+        auto& c = cells[index(x, y)];
+        c = (c == 0) ? 1 : 0;
     }
 
     void setAlive(int x, int y, bool alive = true) {
@@ -55,7 +61,7 @@ public:
         generation++;
     }
 
-    void render(bool paused) const {
+    void render(bool paused, int cursorX, int cursorY) const {
         std::cout << "\x1B[2J\x1B[H";
 
         std::cout
@@ -64,16 +70,30 @@ public:
             << " | Edges: " << (torus ? "Torus" : "Hard")
             << " | " << (paused ? "PAUSED" : "RUNNING")
             << "\n";
+
         std::cout
-            << "[Space]=Pause  [N]=Step  [R]=Reset  [G]=Glider  [Esc]=Quit\n\n";
+            << "[P]=Pause/Run  [WASD]=Move cursor (paused)  [Space]=Toggle cell (paused)\n"
+            << "[N]=Step (paused)  [R]=Reset  [G]=Glider  [Esc]=Quit\n\n";
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                std::cout << (isAlive(x, y) ? '#' : '.');
+                bool alive = isAlive(x, y);
+
+                if (x == cursorX && y == cursorY && paused) {
+                    // Kursor widoczny tylko w pauzie
+                    // 'X' jeśli pod kursorem żywa, '@' jeśli martwa
+                    std::cout << (alive ? 'X' : '@');
+                }
+                else {
+                    std::cout << (alive ? '#' : '.');
+                }
             }
             std::cout << '\n';
         }
     }
+
+    int getWidth() const { return width; }
+    int getHeight() const { return height; }
 
 private:
     int width;
@@ -94,19 +114,20 @@ private:
 
     int countNeighborsTorus(int x, int y) const {
         int count = 0;
-        for (int dy = -1; dy <= 1; dy++)
+        for (int dy = -1; dy <= 1; dy++) {
             for (int dx = -1; dx <= 1; dx++) {
                 if (dx == 0 && dy == 0) continue;
                 int nx = (x + dx + width) % width;
                 int ny = (y + dy + height) % height;
                 count += isAlive(nx, ny);
             }
+        }
         return count;
     }
 
     int countNeighborsHardEdges(int x, int y) const {
         int count = 0;
-        for (int dy = -1; dy <= 1; dy++)
+        for (int dy = -1; dy <= 1; dy++) {
             for (int dx = -1; dx <= 1; dx++) {
                 if (dx == 0 && dy == 0) continue;
                 int nx = x + dx;
@@ -114,16 +135,23 @@ private:
                 if (!inBounds(nx, ny)) continue;
                 count += isAlive(nx, ny);
             }
+        }
         return count;
     }
 };
 
 void placeGlider(World& w, int x, int y) {
-    w.setAlive(x + 1, y);
+    w.setAlive(x + 1, y + 0);
     w.setAlive(x + 2, y + 1);
-    w.setAlive(x, y + 2);
+    w.setAlive(x + 0, y + 2);
     w.setAlive(x + 1, y + 2);
     w.setAlive(x + 2, y + 2);
+}
+
+int clamp(int v, int lo, int hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
 }
 
 int main() {
@@ -133,7 +161,10 @@ int main() {
     bool running = true;
     bool paused = true;
 
-    const int fps = 10;
+    int cursorX = 0;
+    int cursorY = 0;
+
+    const int fps = 30; // szybciej, żeby input był "sprężysty"
     const auto frameTime = std::chrono::milliseconds(1000 / fps);
 
     while (running) {
@@ -142,29 +173,64 @@ int main() {
             char key = _getch();
 
             switch (key) {
-            case ' ':
+            case 'p':
+            case 'P':
                 paused = !paused;
                 break;
+
             case 'n':
             case 'N':
                 if (paused) world.step();
                 break;
+
             case 'r':
             case 'R':
                 world.clear();
                 paused = true;
+                cursorX = 0;
+                cursorY = 0;
                 break;
+
             case 'g':
             case 'G':
                 world.clear();
                 placeGlider(world, 1, 1);
                 paused = true;
                 break;
+
             case 27: // ESC
                 running = false;
                 break;
+
+            case ' ':
+                if (paused) {
+                    world.toggleCell(cursorX, cursorY);
+                }
+                break;
+
+                // Ruch kursora tylko w pauzie
+            case 'w':
+            case 'W':
+                if (paused) cursorY--;
+                break;
+            case 's':
+            case 'S':
+                if (paused) cursorY++;
+                break;
+            case 'a':
+            case 'A':
+                if (paused) cursorX--;
+                break;
+            case 'd':
+            case 'D':
+                if (paused) cursorX++;
+                break;
             }
         }
+
+        // Clamp kursora do planszy
+        cursorX = clamp(cursorX, 0, world.getWidth() - 1);
+        cursorY = clamp(cursorY, 0, world.getHeight() - 1);
 
         // UPDATE
         if (!paused) {
@@ -172,7 +238,7 @@ int main() {
         }
 
         // RENDER
-        world.render(paused);
+        world.render(paused, cursorX, cursorY);
 
         std::this_thread::sleep_for(frameTime);
     }
