@@ -3,8 +3,8 @@
 #include <chrono>
 #include <thread>
 #include <cstdint>
-#include <conio.h>   // _kbhit, _getch (Windows)
-#include <algorithm> // std::fill
+#include <conio.h>
+#include <algorithm>
 
 class World {
 public:
@@ -56,13 +56,13 @@ public:
                 next[index(x, y)] = nextAlive ? 1 : 0;
             }
         }
-
         cells.swap(next);
         generation++;
     }
 
     void render(bool paused, int cursorX, int cursorY) const {
-        std::cout << "\x1B[2J\x1B[H";
+        // tylko home cursor, bez czyszczenia ekranu
+        std::cout << "\x1B[H";
 
         std::cout
             << "Generation: " << generation
@@ -72,16 +72,14 @@ public:
             << "\n";
 
         std::cout
-            << "[P]=Pause/Run  [WASD]=Move cursor (paused)  [Space]=Toggle cell (paused)\n"
-            << "[N]=Step (paused)  [R]=Reset  [G]=Glider  [Esc]=Quit\n\n";
+            << "[P]=Pause/Run  [WASD]=Move (paused)  [Space]=Toggle (paused)  [N]=Step (paused)\n"
+            << "[0]=Clear  [1]=Glider  [2]=Block  [3]=Blinker  [4]=Toad  [5]=Beacon  [Esc]=Quit\n\n";
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 bool alive = isAlive(x, y);
 
-                if (x == cursorX && y == cursorY && paused) {
-                    // Kursor widoczny tylko w pauzie
-                    // 'X' jeśli pod kursorem żywa, '@' jeśli martwa
+                if (paused && x == cursorX && y == cursorY) {
                     std::cout << (alive ? 'X' : '@');
                 }
                 else {
@@ -90,6 +88,8 @@ public:
             }
             std::cout << '\n';
         }
+
+        std::cout.flush();
     }
 
     int getWidth() const { return width; }
@@ -140,12 +140,49 @@ private:
     }
 };
 
+// ---------- Patterns ----------
+
 void placeGlider(World& w, int x, int y) {
     w.setAlive(x + 1, y + 0);
     w.setAlive(x + 2, y + 1);
     w.setAlive(x + 0, y + 2);
     w.setAlive(x + 1, y + 2);
     w.setAlive(x + 2, y + 2);
+}
+
+void placeBlock(World& w, int x, int y) {
+    w.setAlive(x + 0, y + 0);
+    w.setAlive(x + 1, y + 0);
+    w.setAlive(x + 0, y + 1);
+    w.setAlive(x + 1, y + 1);
+}
+
+void placeBlinker(World& w, int x, int y) {
+    w.setAlive(x + 0, y + 0);
+    w.setAlive(x + 1, y + 0);
+    w.setAlive(x + 2, y + 0);
+}
+
+void placeToad(World& w, int x, int y) {
+    w.setAlive(x + 1, y + 0);
+    w.setAlive(x + 2, y + 0);
+    w.setAlive(x + 3, y + 0);
+
+    w.setAlive(x + 0, y + 1);
+    w.setAlive(x + 1, y + 1);
+    w.setAlive(x + 2, y + 1);
+}
+
+void placeBeacon(World& w, int x, int y) {
+    w.setAlive(x + 0, y + 0);
+    w.setAlive(x + 1, y + 0);
+    w.setAlive(x + 0, y + 1);
+    w.setAlive(x + 1, y + 1);
+
+    w.setAlive(x + 2, y + 2);
+    w.setAlive(x + 3, y + 2);
+    w.setAlive(x + 2, y + 3);
+    w.setAlive(x + 3, y + 3);
 }
 
 int clamp(int v, int lo, int hi) {
@@ -155,6 +192,9 @@ int clamp(int v, int lo, int hi) {
 }
 
 int main() {
+    // UKRYJ KURSOR
+    std::cout << "\x1B[?25l";
+
     World world(40, 20);
     world.setTorus(false);
 
@@ -164,11 +204,10 @@ int main() {
     int cursorX = 0;
     int cursorY = 0;
 
-    const int fps = 30; // szybciej, żeby input był "sprężysty"
+    const int fps = 30;
     const auto frameTime = std::chrono::milliseconds(1000 / fps);
 
     while (running) {
-        // INPUT (non-blocking)
         if (_kbhit()) {
             char key = _getch();
 
@@ -191,24 +230,14 @@ int main() {
                 cursorY = 0;
                 break;
 
-            case 'g':
-            case 'G':
-                world.clear();
-                placeGlider(world, 1, 1);
-                paused = true;
-                break;
-
             case 27: // ESC
                 running = false;
                 break;
 
             case ' ':
-                if (paused) {
-                    world.toggleCell(cursorX, cursorY);
-                }
+                if (paused) world.toggleCell(cursorX, cursorY);
                 break;
 
-                // Ruch kursora tylko w pauzie
             case 'w':
             case 'W':
                 if (paused) cursorY--;
@@ -225,23 +254,41 @@ int main() {
             case 'D':
                 if (paused) cursorX++;
                 break;
+
+            case '0':
+                if (paused) world.clear();
+                break;
+            case '1':
+                if (paused) placeGlider(world, cursorX, cursorY);
+                break;
+            case '2':
+                if (paused) placeBlock(world, cursorX, cursorY);
+                break;
+            case '3':
+                if (paused) placeBlinker(world, cursorX, cursorY);
+                break;
+            case '4':
+                if (paused) placeToad(world, cursorX, cursorY);
+                break;
+            case '5':
+                if (paused) placeBeacon(world, cursorX, cursorY);
+                break;
             }
         }
 
-        // Clamp kursora do planszy
         cursorX = clamp(cursorX, 0, world.getWidth() - 1);
         cursorY = clamp(cursorY, 0, world.getHeight() - 1);
 
-        // UPDATE
         if (!paused) {
             world.step();
         }
 
-        // RENDER
         world.render(paused, cursorX, cursorY);
-
         std::this_thread::sleep_for(frameTime);
     }
+
+    // PRZYWRÓĆ KURSOR
+    std::cout << "\x1B[?25h";
 
     return 0;
 }
