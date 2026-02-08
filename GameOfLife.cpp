@@ -5,6 +5,60 @@
 #include <cstdint>
 #include <conio.h>
 #include <algorithm>
+#include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#ifdef _WIN32
+class WinConsole {
+public:
+    static void init() {
+        hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    }
+
+    static void hideCursor() {
+        if (!hOut) return;
+        CONSOLE_CURSOR_INFO info{};
+        info.dwSize = 25;
+        info.bVisible = FALSE;
+        SetConsoleCursorInfo(hOut, &info);
+    }
+
+    static void showCursor() {
+        if (!hOut) return;
+        CONSOLE_CURSOR_INFO info{};
+        info.dwSize = 25;
+        info.bVisible = TRUE;
+        SetConsoleCursorInfo(hOut, &info);
+    }
+
+    static void home() {
+        if (!hOut) return;
+        COORD c{ 0, 0 };
+        SetConsoleCursorPosition(hOut, c);
+    }
+
+    static void clearScreen() {
+        if (!hOut) return;
+
+        CONSOLE_SCREEN_BUFFER_INFO csbi{};
+        if (!GetConsoleScreenBufferInfo(hOut, &csbi)) return;
+
+        DWORD cellCount = csbi.dwSize.X * csbi.dwSize.Y;
+        DWORD written = 0;
+        COORD homeCoord{ 0, 0 };
+
+        FillConsoleOutputCharacterA(hOut, ' ', cellCount, homeCoord, &written);
+        FillConsoleOutputAttribute(hOut, csbi.wAttributes, cellCount, homeCoord, &written);
+        SetConsoleCursorPosition(hOut, homeCoord);
+    }
+
+private:
+    static inline HANDLE hOut = nullptr;
+};
+#endif
 
 class World {
 public:
@@ -60,34 +114,50 @@ public:
         generation++;
     }
 
-    void render(bool paused, int cursorX, int cursorY) const {
-        std::cout << "\x1B[H";
+    // Render: budujemy ramkę w stringu i wypisujemy raz
+    void render(bool paused,
+        int cursorX,
+        int cursorY,
+        const std::string& sizeLabel,
+        bool fullClearOnce) const
+    {
+#ifdef _WIN32
+        if (fullClearOnce) WinConsole::clearScreen();
+        else WinConsole::home();
+#else
+        // Fallback (ANSI) dla innych systemów
+        if (fullClearOnce) std::cout << "\x1B[2J\x1B[H";
+        else std::cout << "\x1B[H";
+#endif
 
-        std::cout
-            << "Generation: " << generation
-            << " | Alive: " << getAliveCount()
-            << " | Edges: " << (torus ? "Torus" : "Hard")
-            << " | " << (paused ? "PAUSED" : "RUNNING")
-            << "\n";
+        std::string frame;
+        frame.reserve(static_cast<size_t>((width + 1) * height + 512));
 
-        std::cout
-            << "[P]=Pause/Run  [WASD/Arrows]=Move (paused)  [Space]=Toggle (paused)  [N]=Step (paused)\n"
-            << "[0]=Clear  [1]=Glider  [2]=Block  [3]=Blinker  [4]=Toad  [5]=Beacon  [Esc]=Quit\n\n";
+        frame += "Generation: " + std::to_string(generation)
+            + " | Alive: " + std::to_string(getAliveCount())
+            + " | Edges: " + std::string(torus ? "Torus" : "Hard")
+            + " | " + (paused ? std::string("PAUSED") : std::string("RUNNING"))
+            + "\n";
+
+        frame += "[P]=Pause/Run  [WASD/Arrows]=Move (paused)  [Space]=Toggle (paused)  [N]=Step (paused)\n";
+        frame += "[E]=Toggle Edges  [R]=Reset  [Esc]=Quit\n";
+        frame += "[0]=Clear  [1]=Glider  [2]=Block  [3]=Blinker  [4]=Toad  [5]=Beacon (place at cursor, paused)\n\n";
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 bool alive = isAlive(x, y);
 
                 if (paused && x == cursorX && y == cursorY) {
-                    std::cout << (alive ? 'X' : '@');
+                    frame += (alive ? 'X' : '@');
                 }
                 else {
-                    std::cout << (alive ? '#' : '.');
+                    frame += (alive ? '#' : '.');
                 }
             }
-            std::cout << '\n';
+            frame += '\n';
         }
 
+        std::cout << frame;
         std::cout.flush();
     }
 
@@ -189,11 +259,40 @@ int clamp(int v, int lo, int hi) {
     return v;
 }
 
-int main() {
-    std::cout << "\x1B[?25l"; // hide cursor
+struct SizePreset {
+    int w;
+    int h;
+    const char* label;
+};
 
-    World world(40, 20);
-    world.setTorus(false);
+int main() {
+#ifdef _WIN32
+    WinConsole::init();
+    WinConsole::hideCursor();
+#else
+    std::cout << "\x1B[?25l";
+#endif
+
+    const SizePreset presets[] = {
+        { 40, 20, "Small"  },
+        { 60, 25, "Medium" },
+        { 80, 30, "Large"  }
+    };
+    const int presetCount = sizeof(presets) / sizeof(presets[0]);
+
+    int presetIndex = 0;
+    bool torusEdges = false;
+
+    World world(presets[presetIndex].w, presets[presetIndex].h);
+    world.setTorus(torusEdges);
+
+    bool fullClearNextRender = true;
+
+    auto recreateWorld = [&]() {
+        world = World(presets[presetIndex].w, presets[presetIndex].h);
+        world.setTorus(torusEdges);
+        fullClearNextRender = true;
+    };
 
     bool running = true;
     bool paused = true;
@@ -208,23 +307,15 @@ int main() {
         if (_kbhit()) {
             int key = _getch();
 
-            // Arrow keys and some special keys come as 0 or 224, then another code
+            // Arrow keys: 0 or 224 + second code
             if (key == 0 || key == 224) {
                 int special = _getch();
                 if (paused) {
                     switch (special) {
-                    case 72: // Up
-                        cursorY--;
-                        break;
-                    case 80: // Down
-                        cursorY++;
-                        break;
-                    case 75: // Left
-                        cursorX--;
-                        break;
-                    case 77: // Right
-                        cursorX++;
-                        break;
+                    case 72: cursorY--; break; // Up
+                    case 80: cursorY++; break; // Down
+                    case 75: cursorX--; break; // Left
+                    case 77: cursorX++; break; // Right
                     }
                 }
             }
@@ -246,17 +337,24 @@ int main() {
                     paused = true;
                     cursorX = 0;
                     cursorY = 0;
+                    fullClearNextRender = true;
                     break;
 
                 case 27: // ESC
                     running = false;
                     break;
 
+                case 'e':
+                case 'E':
+                    torusEdges = !torusEdges;
+                    world.setTorus(torusEdges);
+                    break;
+
                 case ' ':
                     if (paused) world.toggleCell(cursorX, cursorY);
                     break;
 
-                    // WASD movement (paused)
+                // WASD movement (paused)
                 case 'w':
                 case 'W':
                     if (paused) cursorY--;
@@ -274,9 +372,9 @@ int main() {
                     if (paused) cursorX++;
                     break;
 
-                    // Pattern hotkeys (paused)
+                // Pattern hotkeys (paused)
                 case '0':
-                    if (paused) world.clear();
+                    if (paused) { world.clear(); fullClearNextRender = true; }
                     break;
                 case '1':
                     if (paused) placeGlider(world, cursorX, cursorY);
@@ -304,10 +402,17 @@ int main() {
             world.step();
         }
 
-        world.render(paused, cursorX, cursorY);
+        world.render(paused, cursorX, cursorY, presets[presetIndex].label, fullClearNextRender);
+        fullClearNextRender = false;
+
         std::this_thread::sleep_for(frameTime);
     }
 
-    std::cout << "\x1B[?25h"; // show cursor
+#ifdef _WIN32
+    WinConsole::showCursor();
+#else
+    std::cout << "\x1B[?25h";
+#endif
+
     return 0;
 }
